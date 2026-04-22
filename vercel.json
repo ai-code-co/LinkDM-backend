@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "functions": {
+    "api/index.js": {
+      "runtime": "@vercel/node"
+    }
+  },
+  "routes": [
+    { "src": "/health", "dest": "/api/index.js" },
+    { "src": "/payments/paypal/subscriptions/create", "dest": "/api/index.js" },
+    { "src": "/payments/paypal/subscriptions/cancel", "dest": "/api/index.js" },
+    { "src": "/payments/paypal/webhook", "dest": "/api/index.js" }
+  ]
+}
