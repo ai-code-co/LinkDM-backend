@@ -1,10 +1,5 @@
 {
   "version": 2,
-  "functions": {
-    "api/index.js": {
-      "runtime": "nodejs20.x"
-    }
-  },
   "routes": [
     { "src": "/health", "dest": "/api/index.js" },
     { "src": "/payments/paypal/subscriptions/create", "dest": "/api/index.js" },
