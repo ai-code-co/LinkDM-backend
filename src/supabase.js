@@ -258,3 +258,118 @@ export async function deleteFacebookConnectionsByFacebookUserId(facebookUserId) 
 
   return data ?? []
 }
+
+export async function upsertWhatsAppConnection({
+  userId,
+  metaUserId,
+  wabaId,
+  wabaName,
+  phoneNumberId,
+  displayPhoneNumber,
+  verifiedName,
+  encryptedToken,
+  webhookSubscribed,
+}) {
+  if (!adminClient) {
+    throw new Error('Supabase service role is not configured.')
+  }
+
+  const { data, error } = await adminClient
+    .from('whatsapp_connections')
+    .upsert(
+      {
+        user_id: userId,
+        meta_user_id: metaUserId,
+        waba_id: wabaId,
+        waba_name: wabaName,
+        phone_number_id: phoneNumberId,
+        display_phone_number: displayPhoneNumber,
+        verified_name: verifiedName,
+        access_token_encrypted: encryptedToken,
+        webhook_subscribed: webhookSubscribed,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id,phone_number_id' },
+    )
+    .select('id,user_id,phone_number_id,display_phone_number,verified_name,waba_name,webhook_subscribed,created_at,updated_at')
+    .single()
+
+  if (error) {
+    throw new Error(`Failed to save WhatsApp connection: ${error.message}`)
+  }
+
+  return data
+}
+
+export async function getWhatsAppConnectionsByUserId(userId) {
+  if (!adminClient) {
+    throw new Error('Supabase service role is not configured.')
+  }
+
+  const { data, error } = await adminClient
+    .from('whatsapp_connections')
+    .select('id,phone_number_id,display_phone_number,verified_name,waba_name,webhook_subscribed,created_at,updated_at')
+    .eq('user_id', userId)
+    .order('updated_at', { ascending: false })
+
+  if (error) {
+    throw new Error(`Failed to fetch WhatsApp connections: ${error.message}`)
+  }
+
+  return data ?? []
+}
+
+export async function getWhatsAppConnectionByPhoneNumberId(phoneNumberId) {
+  if (!adminClient) {
+    throw new Error('Supabase service role is not configured.')
+  }
+
+  const { data, error } = await adminClient
+    .from('whatsapp_connections')
+    .select('id,user_id,waba_id,waba_name,phone_number_id,display_phone_number,verified_name,access_token_encrypted,webhook_subscribed')
+    .eq('phone_number_id', phoneNumberId)
+    .maybeSingle()
+
+  if (error) {
+    throw new Error(`Failed to fetch WhatsApp connection by phone number: ${error.message}`)
+  }
+
+  return data ?? null
+}
+
+export async function deleteWhatsAppConnectionByUserId(userId, phoneNumberId = null) {
+  if (!adminClient) {
+    throw new Error('Supabase service role is not configured.')
+  }
+
+  let query = adminClient.from('whatsapp_connections').delete().eq('user_id', userId)
+  if (phoneNumberId) {
+    query = query.eq('phone_number_id', phoneNumberId)
+  }
+
+  const { data, error } = await query.select('phone_number_id,access_token_encrypted')
+
+  if (error) {
+    throw new Error(`Failed to delete WhatsApp connection: ${error.message}`)
+  }
+
+  return data ?? []
+}
+
+export async function deleteWhatsAppConnectionsByMetaUserId(metaUserId) {
+  if (!adminClient) {
+    throw new Error('Supabase service role is not configured.')
+  }
+
+  const { data, error } = await adminClient
+    .from('whatsapp_connections')
+    .delete()
+    .eq('meta_user_id', metaUserId)
+    .select('phone_number_id,access_token_encrypted')
+
+  if (error) {
+    throw new Error(`Failed to delete WhatsApp connections: ${error.message}`)
+  }
+
+  return data ?? []
+}

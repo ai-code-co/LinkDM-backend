@@ -57,4 +57,21 @@ export function logN8nForwardResult({ pageId, status, ok, error }) {
   }
 }
 
+export function isActionableWhatsAppValue(value) {
+  if (!value?.messages?.length) return false
+  return value.messages.some(message => message.type && message.type !== 'unsupported')
+}
+
+export function filterActionableWhatsAppChanges(changes = []) {
+  return changes.filter(change => change.field === 'messages' && isActionableWhatsAppValue(change.value))
+}
+
+export function logWhatsAppInbound(_body) {}
+
+export function logWhatsAppSkipped(_phoneNumberId, _skippedCount) {}
+
+export function logWhatsAppToN8n(_payload) {}
+
+export function logN8nToWhatsApp(_payload) {}
+
 export function logN8nToFacebook(_payload) {}

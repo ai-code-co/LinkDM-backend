@@ -14,7 +14,7 @@ import {
 
   exchangeCodeForUserToken,
 
-  forwardWebhookToN8n,
+  forwardWebhookToN8n as forwardFacebookWebhookToN8n,
 
   getFacebookUserId,
 
@@ -27,10 +27,31 @@ import {
 } from './facebook.js'
 
 import {
+
+  buildWhatsAppOAuthUrl,
+
+  exchangeWhatsAppCodeForUserToken,
+
+  extractWhatsAppWebhookEvents,
+
+  forwardWebhookToN8n as forwardWhatsAppWebhookToN8n,
+
+  getMetaUserId,
+
+  getUserWhatsAppPhoneNumbers,
+
+} from './whatsapp.js'
+
+import {
   filterActionableMessaging,
+  filterActionableWhatsAppChanges,
+  isActionableWhatsAppValue,
   logFacebookInbound,
   logFacebookSkipped,
   logN8nToFacebook,
+  logN8nToWhatsApp,
+  logWhatsAppInbound,
+  logWhatsAppSkipped,
 } from './messengerLog.js'
 
 import { cancelPayPalSubscription, createPayPalSubscription, verifyWebhookSignature } from './paypal.js'
@@ -41,6 +62,10 @@ import {
 
   deleteFacebookConnectionsByFacebookUserId,
 
+  deleteWhatsAppConnectionByUserId,
+
+  deleteWhatsAppConnectionsByMetaUserId,
+
   getAuthenticatedUser,
 
   getFacebookConnectionByPageId,
@@ -49,11 +74,17 @@ import {
 
   getLatestActiveSubscriptionByUserId,
 
+  getWhatsAppConnectionByPhoneNumberId,
+
+  getWhatsAppConnectionsByUserId,
+
   markSubscriptionCancelledByProviderId,
 
   upsertFacebookConnection,
 
   upsertSubscriptionFromEvent,
+
+  upsertWhatsAppConnection,
 
 } from './supabase.js'
 
@@ -97,7 +128,7 @@ app.use(express.json({
 
   verify: (req, _res, buf) => {
 
-    if (req.originalUrl?.startsWith('/webhooks/facebook')) {
+    if (req.originalUrl?.startsWith('/webhooks/facebook') || req.originalUrl?.startsWith('/webhooks/whatsapp')) {
 
       req.rawBody = buf
 
@@ -415,6 +446,8 @@ app.post('/webhooks/facebook/data-deletion', async (req, res) => {
 
     await unsubscribeRemovedFacebookConnections(removed)
 
+    await deleteWhatsAppConnectionsByMetaUserId(facebookUserId)
+
 
 
     res.json({
@@ -561,7 +594,7 @@ app.post('/webhooks/facebook', async (req, res) => {
 
 
 
-      await forwardWebhookToN8n({
+      await forwardFacebookWebhookToN8n({
 
         body: filteredBody,
 
@@ -584,6 +617,413 @@ app.post('/webhooks/facebook', async (req, res) => {
   catch (error) {
 
     console.error('Facebook webhook error:', error)
+
+    if (!res.headersSent) {
+
+      res.status(500).json({ error: 'Webhook handling failed' })
+
+    }
+
+  }
+
+})
+
+
+
+app.post('/auth/whatsapp/connect', async (req, res) => {
+
+  try {
+
+    if (!config.metaFacebookAppId || !config.metaAppSecret) {
+
+      return res.status(503).json({ error: 'WhatsApp integration is not configured' })
+
+    }
+
+
+
+    const user = await getAuthenticatedUser(req)
+
+    if (!user) {
+
+      return res.status(401).json({ error: 'Unauthorized' })
+
+    }
+
+
+
+    const state = signState({ userId: user.id, ts: Date.now() })
+
+    const url = buildWhatsAppOAuthUrl(state)
+
+    res.json({ url })
+
+  }
+
+  catch (error) {
+
+    console.error('Failed to start WhatsApp connect:', error)
+
+    res.status(500).json({ error: error.message || 'Failed to start WhatsApp connect' })
+
+  }
+
+})
+
+
+
+app.get('/auth/whatsapp/callback', async (req, res) => {
+
+  try {
+
+    const { code, state, error, error_description: errorDescription } = req.query
+
+
+
+    if (error) {
+
+      const message = encodeURIComponent(String(errorDescription || error))
+
+      return res.redirect(`${config.frontendUrl}/features?whatsapp=error&message=${message}`)
+
+    }
+
+
+
+    if (!code || !state) {
+
+      return res.redirect(`${config.frontendUrl}/features?whatsapp=error&message=Missing%20OAuth%20parameters`)
+
+    }
+
+
+
+    const { userId } = verifyState(String(state))
+
+    const userAccessToken = await exchangeWhatsAppCodeForUserToken(String(code))
+
+    const metaUserId = await getMetaUserId(userAccessToken)
+
+    const phoneNumbers = await getUserWhatsAppPhoneNumbers(userAccessToken)
+
+
+
+    if (!phoneNumbers.length) {
+
+      return res.redirect(`${config.frontendUrl}/features?whatsapp=error&message=No%20WhatsApp%20phone%20numbers%20found`)
+
+    }
+
+
+
+    const connectedNumbers = []
+
+    for (const phone of phoneNumbers) {
+
+      await upsertWhatsAppConnection({
+
+        userId,
+
+        metaUserId,
+
+        wabaId: phone.wabaId,
+
+        wabaName: phone.wabaName,
+
+        phoneNumberId: phone.phoneNumberId,
+
+        displayPhoneNumber: phone.displayPhoneNumber,
+
+        verifiedName: phone.verifiedName,
+
+        encryptedToken: encryptToken(userAccessToken),
+
+        webhookSubscribed: true,
+
+      })
+
+      connectedNumbers.push(phone.displayPhoneNumber || phone.verifiedName || phone.phoneNumberId)
+
+    }
+
+
+
+    const names = encodeURIComponent(connectedNumbers.join(', '))
+
+    res.redirect(`${config.frontendUrl}/features?whatsapp=connected&numbers=${names}`)
+
+  }
+
+  catch (callbackError) {
+
+    console.error('WhatsApp OAuth callback failed:', callbackError)
+
+    const message = encodeURIComponent(callbackError.message || 'WhatsApp connect failed')
+
+    res.redirect(`${config.frontendUrl}/features?whatsapp=error&message=${message}`)
+
+  }
+
+})
+
+
+
+app.get('/auth/whatsapp/status', async (req, res) => {
+
+  try {
+
+    const user = await getAuthenticatedUser(req)
+
+    if (!user) {
+
+      return res.status(401).json({ error: 'Unauthorized' })
+
+    }
+
+
+
+    const connections = await getWhatsAppConnectionsByUserId(user.id)
+
+    res.json({
+
+      connected: connections.length > 0,
+
+      connections,
+
+    })
+
+  }
+
+  catch (error) {
+
+    console.error('Failed to fetch WhatsApp status:', error)
+
+    res.status(500).json({ error: error.message || 'Failed to fetch WhatsApp status' })
+
+  }
+
+})
+
+
+
+app.delete('/auth/whatsapp/disconnect', async (req, res) => {
+
+  try {
+
+    const user = await getAuthenticatedUser(req)
+
+    if (!user) {
+
+      return res.status(401).json({ error: 'Unauthorized' })
+
+    }
+
+
+
+    const phoneNumberId = req.body?.phoneNumberId || null
+
+    const removed = await deleteWhatsAppConnectionByUserId(user.id, phoneNumberId)
+
+
+
+    res.json({ ok: true, removed: removed.map(item => item.phone_number_id) })
+
+  }
+
+  catch (error) {
+
+    console.error('Failed to disconnect WhatsApp:', error)
+
+    res.status(500).json({ error: error.message || 'Failed to disconnect WhatsApp' })
+
+  }
+
+})
+
+
+
+app.get('/webhooks/whatsapp', (req, res) => {
+
+  const mode = req.query['hub.mode']
+
+  const token = req.query['hub.verify_token']
+
+  const challenge = req.query['hub.challenge']
+
+
+
+  if (mode === 'subscribe' && token === config.metaWebhookVerifyToken) {
+
+    return res.status(200).send(challenge)
+
+  }
+
+
+
+  return res.sendStatus(403)
+
+})
+
+
+
+app.post('/log/whatsapp/outbound', (req, res) => {
+  logN8nToWhatsApp({
+    phone_number_id: req.body?.phone_number_id,
+    recipient_id: req.body?.recipient_id,
+    message_text: req.body?.message_text,
+    template: req.body?.template,
+    graph_status: req.body?.graph_status,
+    graph_response: req.body?.graph_response,
+    graph_error: req.body?.graph_error,
+    access_token: req.body?.access_token,
+    node_name: req.body?.node_name,
+  })
+  res.status(200).json({ ok: true })
+})
+
+
+
+app.post('/webhooks/whatsapp', async (req, res) => {
+
+  try {
+
+    const signature = req.headers['x-hub-signature-256']
+
+    if (config.metaAppSecret && req.rawBody) {
+
+      const isValid = verifyFacebookSignature(req.rawBody, signature)
+
+      if (!isValid) {
+
+        console.warn('[WA → Backend] Webhook signature verification failed')
+
+        return res.sendStatus(403)
+
+      }
+
+    }
+
+
+
+    const body = req.body
+
+    if (body?.object !== 'whatsapp_business_account') {
+
+      return res.sendStatus(404)
+
+    }
+
+
+
+    logWhatsAppInbound(body)
+
+
+
+    res.status(200).send('EVENT_RECEIVED')
+
+
+
+    const webhookEvents = extractWhatsAppWebhookEvents(body)
+
+    for (const event of webhookEvents) {
+
+      const phoneNumberId = event.phoneNumberId
+
+      const connection = await getWhatsAppConnectionByPhoneNumberId(phoneNumberId)
+
+      if (!connection) {
+
+        console.warn(`No Linkora connection found for WhatsApp phone number ${phoneNumberId}`)
+
+        continue
+
+      }
+
+
+
+      if (!isActionableWhatsAppValue(event.value)) {
+
+        logWhatsAppSkipped(phoneNumberId, 1)
+
+        continue
+
+      }
+
+
+
+      let accessToken = null
+
+      try {
+
+        accessToken = decryptToken(connection.access_token_encrypted)
+
+      }
+
+      catch (decryptError) {
+
+        console.error(`Failed to decrypt token for phone ${phoneNumberId}:`, decryptError.message)
+
+        continue
+
+      }
+
+
+
+      const actionableChanges = filterActionableWhatsAppChanges(event.entry.changes || [])
+
+      const filteredEntry = {
+
+        ...event.entry,
+
+        changes: actionableChanges.length > 0 ? actionableChanges : [event.change],
+
+      }
+
+      const filteredBody = {
+
+        ...body,
+
+        entry: (body.entry || []).map(e =>
+
+          e.id === event.wabaId ? filteredEntry : e,
+
+        ),
+
+      }
+
+
+
+      await forwardWhatsAppWebhookToN8n({
+
+        body: filteredBody,
+
+        phone_number_id: phoneNumberId,
+
+        display_phone_number: connection.display_phone_number || event.displayPhoneNumber,
+
+        waba_id: connection.waba_id,
+
+        waba_name: connection.waba_name,
+
+        linkora_user_id: connection.user_id,
+
+        access_token: accessToken,
+
+        messaging_product: 'whatsapp',
+
+        metadata: event.value.metadata,
+
+        messages: event.value.messages,
+
+      })
+
+    }
+
+  }
+
+  catch (error) {
+
+    console.error('WhatsApp webhook error:', error)
 
     if (!res.headersSent) {
 

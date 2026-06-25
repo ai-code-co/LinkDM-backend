@@ -60,11 +60,11 @@ export function buildFacebookOAuthUrl(state) {
   return url.toString()
 }
 
-export async function exchangeCodeForUserToken(code) {
+export async function exchangeCodeForUserToken(code, redirectUri = config.metaRedirectUri) {
   const shortLived = await graphGet('/oauth/access_token', {
     client_id: config.metaFacebookAppId,
     client_secret: config.metaAppSecret,
-    redirect_uri: config.metaRedirectUri,
+    redirect_uri: redirectUri,
     code,
   })
 

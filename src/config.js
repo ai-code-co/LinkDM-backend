@@ -28,8 +28,12 @@ export const config = {
   metaRedirectUri:
     process.env.META_REDIRECT_URI
     || `${process.env.BACKEND_URL || `http://localhost:${Number(process.env.PORT || 4000)}`}/auth/facebook/callback`,
+  metaWhatsAppRedirectUri:
+    process.env.META_WHATSAPP_REDIRECT_URI
+    || `${process.env.BACKEND_URL || `http://localhost:${Number(process.env.PORT || 4000)}`}/auth/whatsapp/callback`,
   n8nFacebookWebhookUrl: process.env.N8N_FACEBOOK_WEBHOOK_URL || '',
   n8nInstagramWebhookUrl: process.env.N8N_INSTAGRAM_WEBHOOK_URL || '',
+  n8nWhatsAppWebhookUrl: process.env.N8N_WHATSAPP_WEBHOOK_URL || '',
   tokenEncryptionSecret: process.env.TOKEN_ENCRYPTION_SECRET || process.env.META_FB_APP_SECRET || process.env.META_APP_SECRET || '',
   planIds: {
     pro: {
