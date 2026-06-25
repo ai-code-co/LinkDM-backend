@@ -524,12 +524,6 @@ app.post('/webhooks/facebook', async (req, res) => {
 
     logFacebookInbound(body)
 
-
-
-    res.status(200).send('EVENT_RECEIVED')
-
-
-
     const entries = body.entry || []
 
     for (const entry of entries) {
@@ -611,6 +605,8 @@ app.post('/webhooks/facebook', async (req, res) => {
       })
 
     }
+
+    res.status(200).send('EVENT_RECEIVED')
 
   }
 
@@ -917,12 +913,6 @@ app.post('/webhooks/whatsapp', async (req, res) => {
 
     logWhatsAppInbound(body)
 
-
-
-    res.status(200).send('EVENT_RECEIVED')
-
-
-
     const webhookEvents = extractWhatsAppWebhookEvents(body)
 
     for (const event of webhookEvents) {
@@ -1018,6 +1008,8 @@ app.post('/webhooks/whatsapp', async (req, res) => {
       })
 
     }
+
+    res.status(200).send('EVENT_RECEIVED')
 
   }
 
