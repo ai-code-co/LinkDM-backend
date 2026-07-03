@@ -274,6 +274,16 @@ export async function upsertWhatsAppConnection({
     throw new Error('Supabase service role is not configured.')
   }
 
+  const { error: staleError } = await adminClient
+    .from('whatsapp_connections')
+    .delete()
+    .eq('phone_number_id', phoneNumberId)
+    .neq('user_id', userId)
+
+  if (staleError) {
+    throw new Error(`Failed to remove stale WhatsApp connections: ${staleError.message}`)
+  }
+
   const { data, error } = await adminClient
     .from('whatsapp_connections')
     .upsert(
@@ -326,15 +336,16 @@ export async function getWhatsAppConnectionByPhoneNumberId(phoneNumberId) {
 
   const { data, error } = await adminClient
     .from('whatsapp_connections')
-    .select('id,user_id,waba_id,waba_name,phone_number_id,display_phone_number,verified_name,access_token_encrypted,webhook_subscribed')
+    .select('id,user_id,waba_id,waba_name,phone_number_id,display_phone_number,verified_name,access_token_encrypted,webhook_subscribed,updated_at')
     .eq('phone_number_id', phoneNumberId)
-    .maybeSingle()
+    .order('updated_at', { ascending: false })
+    .limit(1)
 
   if (error) {
     throw new Error(`Failed to fetch WhatsApp connection by phone number: ${error.message}`)
   }
 
-  return data ?? null
+  return data?.[0] ?? null
 }
 
 export async function deleteWhatsAppConnectionByUserId(userId, phoneNumberId = null) {
