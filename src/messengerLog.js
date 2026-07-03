@@ -51,6 +51,14 @@ export function logFacebookInbound(body) {
 
 export function logFacebookToN8n(_payload) {}
 
+export function logInstagramInbound(body) {
+  return summarizeMessagingEvents(body)
+}
+
+export function logInstagramSkipped(_igId, _skippedCount) {}
+
+export function logInstagramToN8n(_payload) {}
+
 export function logN8nForwardResult({ pageId, status, ok, error }) {
   if (!ok) {
     console.error('[FB → n8n] Forward FAILED:', JSON.stringify({ page_id: pageId, status, error }, null, 2))
@@ -75,3 +83,5 @@ export function logWhatsAppToN8n(_payload) {}
 export function logN8nToWhatsApp(_payload) {}
 
 export function logN8nToFacebook(_payload) {}
+
+export function logN8nToInstagram(_payload) {}

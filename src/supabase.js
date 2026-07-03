@@ -373,3 +373,134 @@ export async function deleteWhatsAppConnectionsByMetaUserId(metaUserId) {
 
   return data ?? []
 }
+
+export async function upsertInstagramConnection({
+  userId,
+  facebookUserId,
+  pageId,
+  pageName,
+  instagramBusinessAccountId,
+  instagramUsername,
+  encryptedToken,
+  webhookSubscribed,
+}) {
+  if (!adminClient) {
+    throw new Error('Supabase service role is not configured.')
+  }
+
+  const { data, error } = await adminClient
+    .from('instagram_connections')
+    .upsert(
+      {
+        user_id: userId,
+        facebook_user_id: facebookUserId,
+        page_id: pageId,
+        page_name: pageName,
+        instagram_business_account_id: instagramBusinessAccountId,
+        instagram_username: instagramUsername,
+        page_access_token_encrypted: encryptedToken,
+        webhook_subscribed: webhookSubscribed,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id,instagram_business_account_id' },
+    )
+    .select('id,user_id,page_id,page_name,instagram_business_account_id,instagram_username,webhook_subscribed,created_at,updated_at')
+    .single()
+
+  if (error) {
+    throw new Error(`Failed to save Instagram connection: ${error.message}`)
+  }
+
+  return data
+}
+
+export async function getInstagramConnectionsByUserId(userId) {
+  if (!adminClient) {
+    throw new Error('Supabase service role is not configured.')
+  }
+
+  const { data, error } = await adminClient
+    .from('instagram_connections')
+    .select('id,page_id,page_name,instagram_business_account_id,instagram_username,webhook_subscribed,created_at,updated_at')
+    .eq('user_id', userId)
+    .order('updated_at', { ascending: false })
+
+  if (error) {
+    throw new Error(`Failed to fetch Instagram connections: ${error.message}`)
+  }
+
+  return data ?? []
+}
+
+export async function getInstagramConnectionByIgId(instagramBusinessAccountId) {
+  if (!adminClient) {
+    throw new Error('Supabase service role is not configured.')
+  }
+
+  const { data, error } = await adminClient
+    .from('instagram_connections')
+    .select('id,user_id,page_id,page_name,instagram_business_account_id,instagram_username,page_access_token_encrypted,webhook_subscribed')
+    .eq('instagram_business_account_id', instagramBusinessAccountId)
+    .maybeSingle()
+
+  if (error) {
+    throw new Error(`Failed to fetch Instagram connection by IG account: ${error.message}`)
+  }
+
+  return data ?? null
+}
+
+export async function getInstagramConnectionByPageId(pageId) {
+  if (!adminClient) {
+    throw new Error('Supabase service role is not configured.')
+  }
+
+  const { data, error } = await adminClient
+    .from('instagram_connections')
+    .select('id,user_id,page_id,page_name,instagram_business_account_id,instagram_username,page_access_token_encrypted,webhook_subscribed')
+    .eq('page_id', pageId)
+    .maybeSingle()
+
+  if (error) {
+    throw new Error(`Failed to fetch Instagram connection by page: ${error.message}`)
+  }
+
+  return data ?? null
+}
+
+export async function deleteInstagramConnectionByUserId(userId, instagramBusinessAccountId = null) {
+  if (!adminClient) {
+    throw new Error('Supabase service role is not configured.')
+  }
+
+  let query = adminClient.from('instagram_connections').delete().eq('user_id', userId)
+  if (instagramBusinessAccountId) {
+    query = query.eq('instagram_business_account_id', instagramBusinessAccountId)
+  }
+
+  const { data, error } = await query.select('page_id,instagram_business_account_id,page_access_token_encrypted')
+
+  if (error) {
+    throw new Error(`Failed to delete Instagram connection: ${error.message}`)
+  }
+
+  return data ?? []
+}
+
+export async function deleteInstagramConnectionsByFacebookUserId(facebookUserId) {
+  if (!adminClient) {
+    throw new Error('Supabase service role is not configured.')
+  }
+
+  const { data, error } = await adminClient
+    .from('instagram_connections')
+    .delete()
+    .eq('facebook_user_id', facebookUserId)
+    .select('page_id,instagram_business_account_id,page_access_token_encrypted')
+
+  if (error) {
+    throw new Error(`Failed to delete Instagram connections: ${error.message}`)
+  }
+
+  return data ?? []
+}
