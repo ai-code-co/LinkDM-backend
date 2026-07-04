@@ -432,12 +432,36 @@ export async function getInstagramConnectionsByUserId(userId) {
 
   const { data, error } = await adminClient
     .from('instagram_connections')
-    .select('id,page_id,page_name,instagram_business_account_id,instagram_username,webhook_subscribed,created_at,updated_at')
+    .select('id,page_id,page_name,instagram_business_account_id,instagram_username,webhook_subscribed,comment_automation_enabled,created_at,updated_at')
     .eq('user_id', userId)
     .order('updated_at', { ascending: false })
 
   if (error) {
     throw new Error(`Failed to fetch Instagram connections: ${error.message}`)
+  }
+
+  return data ?? []
+}
+
+export async function setInstagramCommentAutomation(userId, enabled, instagramBusinessAccountId = null) {
+  if (!adminClient) {
+    throw new Error('Supabase service role is not configured.')
+  }
+
+  let query = adminClient
+    .from('instagram_connections')
+    .update({ comment_automation_enabled: enabled, updated_at: new Date().toISOString() })
+    .eq('user_id', userId)
+
+  if (instagramBusinessAccountId) {
+    query = query.eq('instagram_business_account_id', instagramBusinessAccountId)
+  }
+
+  const { data, error } = await query
+    .select('id,page_id,page_name,instagram_business_account_id,instagram_username,webhook_subscribed,comment_automation_enabled,created_at,updated_at')
+
+  if (error) {
+    throw new Error(`Failed to update Instagram comment automation: ${error.message}`)
   }
 
   return data ?? []
@@ -450,7 +474,7 @@ export async function getInstagramConnectionByIgId(instagramBusinessAccountId) {
 
   const { data, error } = await adminClient
     .from('instagram_connections')
-    .select('id,user_id,page_id,page_name,instagram_business_account_id,instagram_username,page_access_token_encrypted,webhook_subscribed')
+    .select('id,user_id,page_id,page_name,instagram_business_account_id,instagram_username,page_access_token_encrypted,webhook_subscribed,comment_automation_enabled')
     .eq('instagram_business_account_id', instagramBusinessAccountId)
     .maybeSingle()
 
@@ -468,7 +492,7 @@ export async function getInstagramConnectionByPageId(pageId) {
 
   const { data, error } = await adminClient
     .from('instagram_connections')
-    .select('id,user_id,page_id,page_name,instagram_business_account_id,instagram_username,page_access_token_encrypted,webhook_subscribed')
+    .select('id,user_id,page_id,page_name,instagram_business_account_id,instagram_username,page_access_token_encrypted,webhook_subscribed,comment_automation_enabled')
     .eq('page_id', pageId)
     .maybeSingle()
 

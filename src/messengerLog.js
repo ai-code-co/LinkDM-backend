@@ -13,6 +13,11 @@ export function filterActionableMessaging(messagingList = []) {
   return messagingList.filter(isActionableMessagingEvent)
 }
 
+/** Instagram comment change events (field === 'comments'), used for Comment-to-DM automation. */
+export function filterInstagramCommentChanges(changes = []) {
+  return changes.filter(change => change.field === 'comments' && change.value)
+}
+
 export function logFacebookSkipped(_pageId, _skippedCount) {}
 
 export function summarizeMessagingEvents(body) {

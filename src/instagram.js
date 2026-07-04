@@ -139,7 +139,7 @@ export async function getUserPagesWithInstagram(userAccessToken) {
 
 export async function subscribePageToInstagramWebhooks(pageId, pageAccessToken) {
   return graphPost(`/${pageId}/subscribed_apps`, {
-    subscribed_fields: 'messages,messaging_postbacks,messaging_optins',
+    subscribed_fields: 'messages,messaging_postbacks,messaging_optins,comments',
     access_token: pageAccessToken,
   })
 }

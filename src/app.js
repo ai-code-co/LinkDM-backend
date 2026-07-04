@@ -63,6 +63,7 @@ import {
 import {
   filterActionableMessaging,
   filterActionableWhatsAppChanges,
+  filterInstagramCommentChanges,
   isActionableWhatsAppValue,
   logFacebookInbound,
   logFacebookSkipped,
@@ -106,6 +107,8 @@ import {
   getWhatsAppConnectionsByUserId,
 
   markSubscriptionCancelledByProviderId,
+
+  setInstagramCommentAutomation,
 
   upsertFacebookConnection,
 
@@ -646,6 +649,58 @@ app.delete('/auth/instagram/disconnect', async (req, res) => {
     console.error('Failed to disconnect Instagram:', error)
 
     res.status(500).json({ error: error.message || 'Failed to disconnect Instagram' })
+
+  }
+
+})
+
+
+
+app.patch('/auth/instagram/comment-automation', async (req, res) => {
+
+  try {
+
+    const user = await getAuthenticatedUser(req)
+
+    if (!user) {
+
+      return res.status(401).json({ error: 'Unauthorized' })
+
+    }
+
+
+
+    if (typeof req.body?.enabled !== 'boolean') {
+
+      return res.status(400).json({ error: 'Field "enabled" (boolean) is required' })
+
+    }
+
+
+
+    const instagramBusinessAccountId = req.body?.instagramBusinessAccountId || null
+
+    const connections = await setInstagramCommentAutomation(
+
+      user.id,
+
+      req.body.enabled,
+
+      instagramBusinessAccountId,
+
+    )
+
+
+
+    res.json({ ok: true, connections })
+
+  }
+
+  catch (error) {
+
+    console.error('Failed to update Instagram comment automation:', error)
+
+    res.status(500).json({ error: error.message || 'Failed to update Instagram comment automation' })
 
   }
 
@@ -1414,9 +1469,25 @@ app.post('/webhooks/instagram', async (req, res) => {
 
       const actionableMessaging = filterActionableMessaging(entry.messaging || [])
 
-      if (actionableMessaging.length === 0) {
+      const commentAutomationEnabled = connection.comment_automation_enabled !== false
 
-        logInstagramSkipped(connection.instagram_business_account_id || pageId, (entry.messaging || []).length)
+      const commentChanges = commentAutomationEnabled
+
+        ? filterInstagramCommentChanges(entry.changes || [])
+
+        : []
+
+
+
+      if (actionableMessaging.length === 0 && commentChanges.length === 0) {
+
+        logInstagramSkipped(
+
+          connection.instagram_business_account_id || pageId,
+
+          (entry.messaging || []).length + (entry.changes || []).length,
+
+        )
 
         continue
 
@@ -1424,7 +1495,7 @@ app.post('/webhooks/instagram', async (req, res) => {
 
 
 
-      const filteredEntry = { ...entry, messaging: actionableMessaging }
+      const filteredEntry = { ...entry, messaging: actionableMessaging, changes: commentChanges }
 
       const filteredBody = {
 
@@ -1432,7 +1503,7 @@ app.post('/webhooks/instagram', async (req, res) => {
 
         entry: (body.entry || []).map(e =>
 
-          e.id === entryId ? { ...e, messaging: actionableMessaging } : e,
+          e.id === entryId ? { ...e, messaging: actionableMessaging, changes: commentChanges } : e,
 
         ),
 
@@ -1459,6 +1530,8 @@ app.post('/webhooks/instagram', async (req, res) => {
         page_access_token: pageAccessToken,
 
         messaging_product: 'instagram',
+
+        comment_automation_enabled: commentAutomationEnabled,
 
       })
 
