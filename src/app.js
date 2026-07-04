@@ -43,12 +43,33 @@ import {
 } from './whatsapp.js'
 
 import {
+
+  buildInstagramOAuthUrl,
+
+  exchangeInstagramCodeForUserToken,
+
+  forwardWebhookToN8n as forwardInstagramWebhookToN8n,
+
+  getUserPagesWithInstagram,
+
+  isInstagramMessagingWebhook,
+
+  resolveInstagramConnection,
+
+  subscribePageToInstagramWebhooks,
+
+} from './instagram.js'
+
+import {
   filterActionableMessaging,
   filterActionableWhatsAppChanges,
   isActionableWhatsAppValue,
   logFacebookInbound,
   logFacebookSkipped,
+  logInstagramInbound,
+  logInstagramSkipped,
   logN8nToFacebook,
+  logN8nToInstagram,
   logN8nToWhatsApp,
   logWhatsAppInbound,
   logWhatsAppSkipped,
@@ -62,6 +83,10 @@ import {
 
   deleteFacebookConnectionsByFacebookUserId,
 
+  deleteInstagramConnectionByUserId,
+
+  deleteInstagramConnectionsByFacebookUserId,
+
   deleteWhatsAppConnectionByUserId,
 
   deleteWhatsAppConnectionsByMetaUserId,
@@ -71,6 +96,8 @@ import {
   getFacebookConnectionByPageId,
 
   getFacebookConnectionsByUserId,
+
+  getInstagramConnectionsByUserId,
 
   getLatestActiveSubscriptionByUserId,
 
@@ -82,6 +109,8 @@ import {
 
   upsertFacebookConnection,
 
+  upsertInstagramConnection,
+
   upsertSubscriptionFromEvent,
 
   upsertWhatsAppConnection,
@@ -91,6 +120,20 @@ import {
 
 
 const app = express()
+
+/** Meta webhook HMAC must use the exact bytes received — never JSON.stringify(req.body). */
+function captureRawBody(req, _res, buf) {
+  req.rawBody = buf
+}
+
+app.use(cors({ origin: '*', credentials: false }))
+
+app.use(express.urlencoded({ extended: false }))
+
+app.use(express.json({
+  limit: '1mb',
+  verify: captureRawBody,
+}))
 
 
 
@@ -118,25 +161,27 @@ async function unsubscribeRemovedFacebookConnections(connections) {
 
 
 
-app.use(cors({ origin: '*', credentials: false }))
+async function unsubscribeRemovedInstagramConnections(connections) {
 
-app.use(express.urlencoded({ extended: false }))
+  for (const connection of connections) {
 
-app.use(express.json({
+    try {
 
-  limit: '1mb',
+      const pageAccessToken = decryptToken(connection.page_access_token_encrypted)
 
-  verify: (req, _res, buf) => {
-
-    if (req.originalUrl?.startsWith('/webhooks/facebook') || req.originalUrl?.startsWith('/webhooks/whatsapp')) {
-
-      req.rawBody = buf
+      await unsubscribePageFromWebhooks(connection.page_id, pageAccessToken)
 
     }
 
-  },
+    catch (unsubscribeError) {
 
-}))
+      console.warn(`Could not unsubscribe Instagram page ${connection.page_id}:`, unsubscribeError.message)
+
+    }
+
+  }
+
+}
 
 
 
@@ -170,7 +215,7 @@ app.post('/auth/facebook/connect', async (req, res) => {
 
 
 
-    const state = signState({ userId: user.id, ts: Date.now() })
+    const state = signState({ userId: user.id, ts: Date.now() }, config.metaAppSecret)
 
     const url = buildFacebookOAuthUrl(state)
 
@@ -216,7 +261,7 @@ app.get('/auth/facebook/callback', async (req, res) => {
 
 
 
-    const { userId } = verifyState(String(state))
+    const { userId } = verifyState(String(state), config.metaAppSecret)
 
     const userAccessToken = await exchangeCodeForUserToken(String(code))
 
@@ -376,6 +421,238 @@ app.delete('/auth/facebook/disconnect', async (req, res) => {
 
 
 
+app.post('/auth/instagram/connect', async (req, res) => {
+
+  try {
+
+    if (!config.metaFacebookAppId || !config.metaAppSecret) {
+
+      return res.status(503).json({ error: 'Instagram integration is not configured' })
+
+    }
+
+
+
+    const user = await getAuthenticatedUser(req)
+
+    if (!user) {
+
+      return res.status(401).json({ error: 'Unauthorized' })
+
+    }
+
+
+
+    const state = signState({ userId: user.id, ts: Date.now() }, config.metaAppSecret)
+
+    const url = buildInstagramOAuthUrl(state)
+
+    res.json({ url })
+
+  }
+
+  catch (error) {
+
+    console.error('Failed to start Instagram connect:', error)
+
+    res.status(500).json({ error: error.message || 'Failed to start Instagram connect' })
+
+  }
+
+})
+
+
+
+app.get('/auth/instagram/callback', async (req, res) => {
+
+  try {
+
+    const { code, state, error, error_description: errorDescription } = req.query
+
+
+
+    if (error) {
+
+      const message = encodeURIComponent(String(errorDescription || error))
+
+      return res.redirect(`${config.frontendUrl}/features?instagram=error&message=${message}`)
+
+    }
+
+
+
+    if (!code || !state) {
+
+      return res.redirect(`${config.frontendUrl}/features?instagram=error&message=Missing%20OAuth%20parameters`)
+
+    }
+
+
+
+    const { userId } = verifyState(String(state), config.metaAppSecret)
+
+    const userAccessToken = await exchangeInstagramCodeForUserToken(String(code))
+
+    const facebookUserId = await getFacebookUserId(userAccessToken)
+
+    const pagesWithInstagram = await getUserPagesWithInstagram(userAccessToken)
+
+
+
+    if (!pagesWithInstagram.length) {
+
+      return res.redirect(`${config.frontendUrl}/features?instagram=error&message=No%20Instagram%20accounts%20found`)
+
+    }
+
+
+
+    const connectedAccounts = []
+
+    for (const page of pagesWithInstagram) {
+
+      let webhookSubscribed = false
+
+      try {
+
+        await subscribePageToInstagramWebhooks(page.pageId, page.pageAccessToken)
+
+        webhookSubscribed = true
+
+      }
+
+      catch (subscribeError) {
+
+        console.error(`Failed to subscribe page ${page.pageId} to Instagram webhooks:`, subscribeError.message)
+
+      }
+
+
+
+      await upsertInstagramConnection({
+
+        userId,
+
+        facebookUserId,
+
+        pageId: page.pageId,
+
+        pageName: page.pageName,
+
+        instagramBusinessAccountId: page.instagramBusinessAccountId,
+
+        instagramUsername: page.instagramUsername,
+
+        encryptedToken: encryptToken(page.pageAccessToken),
+
+        webhookSubscribed,
+
+      })
+
+      connectedAccounts.push(page.instagramUsername || page.pageName || page.instagramBusinessAccountId)
+
+    }
+
+
+
+    const names = encodeURIComponent(connectedAccounts.join(', '))
+
+    res.redirect(`${config.frontendUrl}/features?instagram=connected&accounts=${names}`)
+
+  }
+
+  catch (callbackError) {
+
+    console.error('Instagram OAuth callback failed:', callbackError)
+
+    const message = encodeURIComponent(callbackError.message || 'Instagram connect failed')
+
+    res.redirect(`${config.frontendUrl}/features?instagram=error&message=${message}`)
+
+  }
+
+})
+
+
+
+app.get('/auth/instagram/status', async (req, res) => {
+
+  try {
+
+    const user = await getAuthenticatedUser(req)
+
+    if (!user) {
+
+      return res.status(401).json({ error: 'Unauthorized' })
+
+    }
+
+
+
+    const connections = await getInstagramConnectionsByUserId(user.id)
+
+    res.json({
+
+      connected: connections.length > 0,
+
+      connections,
+
+    })
+
+  }
+
+  catch (error) {
+
+    console.error('Failed to fetch Instagram status:', error)
+
+    res.status(500).json({ error: error.message || 'Failed to fetch Instagram status' })
+
+  }
+
+})
+
+
+
+app.delete('/auth/instagram/disconnect', async (req, res) => {
+
+  try {
+
+    const user = await getAuthenticatedUser(req)
+
+    if (!user) {
+
+      return res.status(401).json({ error: 'Unauthorized' })
+
+    }
+
+
+
+    const instagramBusinessAccountId = req.body?.instagramBusinessAccountId || null
+
+    const removed = await deleteInstagramConnectionByUserId(user.id, instagramBusinessAccountId)
+
+
+
+    await unsubscribeRemovedInstagramConnections(removed)
+
+
+
+    res.json({ ok: true, removed: removed.map(item => item.instagram_business_account_id) })
+
+  }
+
+  catch (error) {
+
+    console.error('Failed to disconnect Instagram:', error)
+
+    res.status(500).json({ error: error.message || 'Failed to disconnect Instagram' })
+
+  }
+
+})
+
+
+
 app.get('/webhooks/facebook', (req, res) => {
 
   const mode = req.query['hub.mode']
@@ -446,6 +723,10 @@ app.post('/webhooks/facebook/data-deletion', async (req, res) => {
 
     await unsubscribeRemovedFacebookConnections(removed)
 
+    const removedInstagram = await deleteInstagramConnectionsByFacebookUserId(facebookUserId)
+
+    await unsubscribeRemovedInstagramConnections(removedInstagram)
+
     await deleteWhatsAppConnectionsByMetaUserId(facebookUserId)
 
 
@@ -498,7 +779,7 @@ app.post('/webhooks/facebook', async (req, res) => {
 
     if (config.metaAppSecret && req.rawBody) {
 
-      const isValid = verifyFacebookSignature(req.rawBody, signature)
+      const isValid = verifyFacebookSignature(req.rawBody, signature, config.metaAppSecret)
 
       if (!isValid) {
 
@@ -648,7 +929,7 @@ app.post('/auth/whatsapp/connect', async (req, res) => {
 
 
 
-    const state = signState({ userId: user.id, ts: Date.now() })
+    const state = signState({ userId: user.id, ts: Date.now() }, config.metaAppSecret)
 
     const url = buildWhatsAppOAuthUrl(state)
 
@@ -694,7 +975,7 @@ app.get('/auth/whatsapp/callback', async (req, res) => {
 
 
 
-    const { userId } = verifyState(String(state))
+    const { userId } = verifyState(String(state), config.metaAppSecret)
 
     const userAccessToken = await exchangeWhatsAppCodeForUserToken(String(code))
 
@@ -887,7 +1168,7 @@ app.post('/webhooks/whatsapp', async (req, res) => {
 
     if (config.metaAppSecret && req.rawBody) {
 
-      const isValid = verifyFacebookSignature(req.rawBody, signature)
+      const isValid = verifyFacebookSignature(req.rawBody, signature, config.metaAppSecret)
 
       if (!isValid) {
 
@@ -1016,6 +1297,182 @@ app.post('/webhooks/whatsapp', async (req, res) => {
   catch (error) {
 
     console.error('WhatsApp webhook error:', error)
+
+    if (!res.headersSent) {
+
+      res.status(500).json({ error: 'Webhook handling failed' })
+
+    }
+
+  }
+
+})
+
+
+
+app.get('/webhooks/instagram', (req, res) => {
+
+  const mode = req.query['hub.mode']
+
+  const token = req.query['hub.verify_token']
+
+  const challenge = req.query['hub.challenge']
+
+
+
+  if (mode === 'subscribe' && token === config.metaWebhookVerifyToken) {
+
+    return res.status(200).send(challenge)
+
+  }
+
+
+
+  return res.sendStatus(403)
+
+})
+
+
+
+app.post('/log/instagram/outbound', (req, res) => {
+  logN8nToInstagram({
+    instagram_business_account_id: req.body?.instagram_business_account_id,
+    page_id: req.body?.page_id,
+    recipient_id: req.body?.recipient_id,
+    message_text: req.body?.message_text,
+    postback_payload: req.body?.postback_payload,
+    graph_status: req.body?.graph_status,
+    graph_response: req.body?.graph_response,
+    graph_error: req.body?.graph_error,
+    page_access_token: req.body?.page_access_token,
+    node_name: req.body?.node_name,
+  })
+  res.status(200).json({ ok: true })
+})
+
+
+
+app.post('/webhooks/instagram', async (req, res) => {
+
+  try {
+
+    const body = req.body
+
+    if (!isInstagramMessagingWebhook(body)) {
+
+      return res.sendStatus(404)
+
+    }
+
+
+
+    logInstagramInbound(body)
+
+    const entries = body.entry || []
+
+
+
+    for (const entry of entries) {
+
+      const entryId = entry.id
+
+      const connection = await resolveInstagramConnection(entry)
+
+
+
+      if (!connection) {
+
+        console.warn(`No Linkora Instagram connection found for entry ${entryId}`)
+
+        continue
+
+      }
+
+
+
+      const pageId = connection.page_id || entryId
+
+
+
+      let pageAccessToken = null
+
+      try {
+
+        pageAccessToken = decryptToken(connection.page_access_token_encrypted)
+
+      }
+
+      catch (decryptError) {
+
+        console.error(`Failed to decrypt Instagram token for page ${pageId}:`, decryptError.message)
+
+        continue
+
+      }
+
+
+
+      const actionableMessaging = filterActionableMessaging(entry.messaging || [])
+
+      if (actionableMessaging.length === 0) {
+
+        logInstagramSkipped(connection.instagram_business_account_id || pageId, (entry.messaging || []).length)
+
+        continue
+
+      }
+
+
+
+      const filteredEntry = { ...entry, messaging: actionableMessaging }
+
+      const filteredBody = {
+
+        ...body,
+
+        entry: (body.entry || []).map(e =>
+
+          e.id === entryId ? { ...e, messaging: actionableMessaging } : e,
+
+        ),
+
+      }
+
+
+
+      await forwardInstagramWebhookToN8n({
+
+        body: filteredBody,
+
+        entry: filteredEntry,
+
+        page_id: pageId,
+
+        page_name: connection.page_name,
+
+        instagram_business_account_id: connection.instagram_business_account_id,
+
+        instagram_username: connection.instagram_username,
+
+        linkora_user_id: connection.user_id,
+
+        page_access_token: pageAccessToken,
+
+        messaging_product: 'instagram',
+
+      })
+
+    }
+
+
+
+    res.status(200).send('EVENT_RECEIVED')
+
+  }
+
+  catch (error) {
+
+    console.error('Instagram webhook error:', error)
 
     if (!res.headersSent) {
 

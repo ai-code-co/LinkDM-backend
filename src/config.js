@@ -23,14 +23,18 @@ export const config = {
   supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
   metaFacebookAppId: process.env.META_FB_APP_ID || process.env.META_APP_ID || '',
   metaAppSecret: process.env.META_FB_APP_SECRET || process.env.META_APP_SECRET || '',
-  metaWebhookVerifyToken: process.env.META_WEBHOOK_VERIFY_TOKEN || '',
+  metaWebhookVerifyToken: process.env.META_WEBHOOK_VERIFY_TOKEN || process.env.META_FACEBOOK_WEBHOOK_VERIFY_TOKEN || '',
   metaGraphApiVersion: process.env.META_GRAPH_API_VERSION || 'v25.0',
   metaRedirectUri:
-    process.env.META_REDIRECT_URI
+    process.env.META_FACEBOOK_REDIRECT_URI
+    || process.env.META_REDIRECT_URI
     || `${process.env.BACKEND_URL || `http://localhost:${Number(process.env.PORT || 4000)}`}/auth/facebook/callback`,
   metaWhatsAppRedirectUri:
     process.env.META_WHATSAPP_REDIRECT_URI
     || `${process.env.BACKEND_URL || `http://localhost:${Number(process.env.PORT || 4000)}`}/auth/whatsapp/callback`,
+  metaInstagramRedirectUri:
+    process.env.META_INSTAGRAM_REDIRECT_URI
+    || `${process.env.BACKEND_URL || `http://localhost:${Number(process.env.PORT || 4000)}`}/auth/instagram/callback`,
   n8nFacebookWebhookUrl: process.env.N8N_FACEBOOK_WEBHOOK_URL || '',
   n8nInstagramWebhookUrl: process.env.N8N_INSTAGRAM_WEBHOOK_URL || '',
   n8nWhatsAppWebhookUrl: process.env.N8N_WHATSAPP_WEBHOOK_URL || '',

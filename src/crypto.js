@@ -1,19 +1,19 @@
 import crypto from 'node:crypto'
 import { config } from './config.js'
 
-function getEncryptionKey() {
-  return crypto.createHash('sha256').update(config.tokenEncryptionSecret).digest()
+function getEncryptionKey(secret = config.tokenEncryptionSecret) {
+  return crypto.createHash('sha256').update(secret).digest()
 }
 
-export function encryptToken(plainText) {
+function encryptTokenWithSecret(plainText, secret) {
   const iv = crypto.randomBytes(12)
-  const cipher = crypto.createCipheriv('aes-256-gcm', getEncryptionKey(), iv)
+  const cipher = crypto.createCipheriv('aes-256-gcm', getEncryptionKey(secret), iv)
   const encrypted = Buffer.concat([cipher.update(plainText, 'utf8'), cipher.final()])
   const tag = cipher.getAuthTag()
   return `${iv.toString('base64')}.${tag.toString('base64')}.${encrypted.toString('base64')}`
 }
 
-export function decryptToken(payload) {
+function decryptTokenWithSecret(payload, secret) {
   const [ivB64, tagB64, dataB64] = payload.split('.')
   if (!ivB64 || !tagB64 || !dataB64) {
     throw new Error('Invalid encrypted token format')
@@ -21,27 +21,35 @@ export function decryptToken(payload) {
   const iv = Buffer.from(ivB64, 'base64')
   const tag = Buffer.from(tagB64, 'base64')
   const data = Buffer.from(dataB64, 'base64')
-  const decipher = crypto.createDecipheriv('aes-256-gcm', getEncryptionKey(), iv)
+  const decipher = crypto.createDecipheriv('aes-256-gcm', getEncryptionKey(secret), iv)
   decipher.setAuthTag(tag)
   return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8')
 }
 
-export function signState(payload) {
+export function encryptToken(plainText) {
+  return encryptTokenWithSecret(plainText, config.tokenEncryptionSecret)
+}
+
+export function decryptToken(payload) {
+  return decryptTokenWithSecret(payload, config.tokenEncryptionSecret)
+}
+
+export function signState(payload, appSecret = config.metaAppSecret) {
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url')
   const signature = crypto
-    .createHmac('sha256', config.metaAppSecret)
+    .createHmac('sha256', appSecret)
     .update(body)
     .digest('base64url')
   return `${body}.${signature}`
 }
 
-export function verifyState(state) {
+export function verifyState(state, appSecret = config.metaAppSecret) {
   const [body, signature] = state.split('.')
   if (!body || !signature) {
     throw new Error('Invalid OAuth state')
   }
   const expected = crypto
-    .createHmac('sha256', config.metaAppSecret)
+    .createHmac('sha256', appSecret)
     .update(body)
     .digest('base64url')
   if (signature !== expected) {
@@ -95,19 +103,41 @@ export function parseSignedRequest(signedRequest) {
   return data
 }
 
-export function verifyFacebookSignature(rawBody, signatureHeader) {
-  if (!signatureHeader?.startsWith('sha256=')) {
+/** Meta docs: HMAC-SHA256(raw body bytes, App Secret) compared to X-Hub-Signature-256 hex. */
+export function verifyMetaWebhookSignature(rawBody, signatureHeader, appSecret) {
+  if (!signatureHeader || !rawBody || !Buffer.isBuffer(rawBody)) {
     return false
   }
-  const signature = signatureHeader.slice('sha256='.length)
-  const expected = crypto
-    .createHmac('sha256', config.metaAppSecret)
+
+  const secret = typeof appSecret === 'string' ? appSecret.trim() : appSecret
+  if (!secret) {
+    return false
+  }
+
+  const elements = String(signatureHeader).split('=')
+  const signatureHash = elements[1]
+  if (!signatureHash) {
+    return false
+  }
+
+  const expectedHash = crypto
+    .createHmac('sha256', secret)
     .update(rawBody)
     .digest('hex')
+
   try {
-    return crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expected, 'hex'))
+    const a = Buffer.from(signatureHash, 'hex')
+    const b = Buffer.from(expectedHash, 'hex')
+    if (a.length !== b.length) {
+      return false
+    }
+    return crypto.timingSafeEqual(a, b)
   }
   catch {
     return false
   }
+}
+
+export function verifyFacebookSignature(rawBody, signatureHeader, appSecret = config.metaAppSecret) {
+  return verifyMetaWebhookSignature(rawBody, signatureHeader, appSecret)
 }
